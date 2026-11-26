@@ -15,6 +15,11 @@ create table if not exists public.documents (
 );
 create index if not exists documents_user_updated on public.documents (user_id, updated desc);
 
+-- Signed-in users may use the table (newer projects don't grant this automatically);
+-- the row-level security rules below still limit each person to their own rows.
+grant select, insert, update, delete on public.documents to authenticated;
+revoke all on public.documents from anon;
+
 -- Row Level Security: every person can only see and change their own rows.
 alter table public.documents enable row level security;
 
