@@ -17,11 +17,12 @@ A website that turns a photo of a paper form into an editable, fillable copy.
 
 ## Hosting on GitHub Pages
 
-The site is plain static files, deployed by `.github/workflows/pages.yml` on every push to `main`.
+The site is plain static files served from the `gh-pages` branch. `.github/workflows/pages.yml` copies `main` to `gh-pages` on every push, so just push to `main`.
 
-1. Merge this branch into `main`.
-2. In the repository go to **Settings → Pages** and set **Source** to **GitHub Actions** (one time).
-3. The site will be at `https://<your-user>.github.io/School-dokument-use/`.
+If the site shows a 404, open **Settings → Pages** and set **Source** to *Deploy from a branch*,
+branch `gh-pages`, folder `/ (root)`.
+
+Live site: `https://blixermixer.github.io/School-dokument-use/`
 
 GitHub Pages on a private repository requires a paid GitHub plan; on a free plan make the repo public.
 
