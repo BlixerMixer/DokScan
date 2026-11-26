@@ -1,4 +1,4 @@
-# DokScan – School-dokument-use
+# DokScan
 
 A website that turns a photo of a paper form into an editable, fillable copy.
 
@@ -22,7 +22,7 @@ The site is plain static files served from the `gh-pages` branch. `.github/workf
 If the site shows a 404, open **Settings → Pages** and set **Source** to *Deploy from a branch*,
 branch `gh-pages`, folder `/ (root)`.
 
-Live site: `https://blixermixer.github.io/School-dokument-use/`
+Live site: `https://blixermixer.github.io/DokScan/`
 
 GitHub Pages on a private repository requires a paid GitHub plan; on a free plan make the repo public.
 
