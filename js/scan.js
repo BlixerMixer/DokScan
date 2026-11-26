@@ -14,11 +14,46 @@ async function getWorker(lang) {
     corePath: VENDOR + 'tesseract/core',
     logger: (m) => progressCb && progressCb(m),
   };
+  // English ships with the site (put straight into Tesseract's cache);
+  // other languages are downloaded from the CDN on first use.
+  if (lang.split('+').includes('eng')) await seedEnglishCache();
   if (lang === 'eng') opts.langPath = VENDOR + 'tessdata';
   worker = await window.Tesseract.createWorker(lang, 1, opts);
   await worker.setParameters({ preserve_interword_spaces: '1' });
   workerLang = lang;
   return worker;
+}
+
+// Tesseract.js keeps language files in IndexedDB ("keyval-store" / "keyval",
+// key "./<lang>.traineddata") and un-gzips whatever it finds there.
+function openTessCache() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('keyval-store');
+    req.onupgradeneeded = () => req.result.createObjectStore('keyval');
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function seedEnglishCache() {
+  const KEY = './eng.traineddata';
+  try {
+    const db = await openTessCache();
+    const req = (r) => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+    const have = await req(db.transaction('keyval').objectStore('keyval').count(KEY));
+    if (!have) {
+      // the .wasm name is the same file, for hosts that refuse to serve .gz
+      for (const name of ['eng.traineddata.gz', 'eng.traineddata.wasm']) {
+        const r = await fetch(VENDOR + 'tessdata/' + name).catch(() => null);
+        if (!r || !r.ok) continue;
+        const data = new Uint8Array(await r.arrayBuffer());
+        await req(db.transaction('keyval', 'readwrite').objectStore('keyval').put(data, KEY));
+        break;
+      }
+    }
+    db.close();
+  } catch (e) {
+    console.warn('Could not pre-load English language data', e);
+  }
 }
 
 let uid = 0;

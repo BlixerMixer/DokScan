@@ -42,6 +42,34 @@ function download(blob, name) {
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 }
 
+// In-page confirmation (native confirm() is blocked in some embedded viewers).
+function ask(message, okLabel = 'OK', danger = false) {
+  return new Promise((resolve) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'busy ask';
+    wrap.innerHTML = `<div class="busy-card" role="alertdialog" aria-modal="true">
+      <p class="ask-msg"></p>
+      <div class="ask-row"><button class="btn" data-r="0">Cancel</button>
+      <button class="btn ${danger ? 'danger-solid' : 'primary'}" data-r="1"></button></div></div>`;
+    wrap.querySelector('.ask-msg').textContent = message;
+    wrap.querySelector('[data-r="1"]').textContent = okLabel;
+    const done = (v) => { wrap.remove(); document.removeEventListener('keydown', key, true); resolve(v); };
+    const key = (e) => { if (e.key === 'Escape') { e.stopPropagation(); done(false); } };
+    wrap.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-r]');
+      if (b) done(b.dataset.r === '1');
+      else if (e.target === wrap) done(false);
+    });
+    document.addEventListener('keydown', key, true);
+    document.body.appendChild(wrap);
+    wrap.querySelector('[data-r="1"]').focus();
+  });
+}
+
+function setHash(h) {
+  try { history.replaceState(null, '', h || location.pathname + location.search); } catch { /* sandboxed viewer */ }
+}
+
 const safeName = (s) => (s || 'document').replace(/[\\/:*?"<>|]+/g, '_').trim() || 'document';
 const fmtDate = (t) => new Date(t).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 
@@ -103,7 +131,7 @@ async function renderLibrary() {
       const a = e.target.closest('[data-a]')?.dataset.a || (e.target.closest('.thumb') ? 'open' : null);
       if (a === 'open') openDoc(d.id);
       else if (a === 'copy') blankCopy(d.id);
-      else if (a === 'del' && confirm(`Delete “${d.name}”? This cannot be undone.`)) {
+      else if (a === 'del' && await ask(`Delete “${d.name}”? This cannot be undone.`, 'Delete', true)) {
         await deleteDoc(d.id);
         if (prefs.get('lastDoc') === d.id) prefs.set('lastDoc', null);
         renderLibrary();
@@ -134,7 +162,7 @@ function goHome() {
   prefs.set('lastDoc', null);
   showView('home');
   renderLibrary();
-  history.replaceState(null, '', location.pathname);
+  setHash('');
 }
 
 // ------------------------------------------------------------------ input of images
@@ -306,7 +334,7 @@ async function openDoc(id, mode = 'fill') {
   setMode(mode);
   renderPage();
   setSaved(true);
-  history.replaceState(null, '', '#doc=' + id);
+  setHash('#doc=' + id);
 }
 
 const pos = (v) => `calc(var(--s) * ${+v.toFixed(2)}px)`;
@@ -822,8 +850,8 @@ async function printDoc() {
   setTimeout(() => window.print(), 50);
 }
 
-function clearFields() {
-  if (!confirm('Empty every field, table cell and checkbox in this document?')) return;
+async function clearFields() {
+  if (!await ask('Empty every field, table cell and checkbox in this document?', 'Clear fields', true)) return;
   snapshot();
   for (const el of editor.doc.elements) {
     if (el.type === 'field' || el.type === 'cell') el.value = '';
@@ -837,7 +865,7 @@ async function rescan() {
   const doc = editor.doc;
   if (!doc.image) return;
   const langName = LANGS.find(([v]) => v === prefs.get('lang', 'eng'))?.[1] || 'English';
-  if (!confirm(`Re-scan the original image using ${langName} text recognition?\n\nThis replaces the current layout and anything typed into it (you can undo).`)) return;
+  if (!await ask(`Re-scan the original image using ${langName} text recognition? This replaces the current layout and anything typed into it (you can undo).`, 'Re-scan')) return;
   busy.show('Loading image…');
   try {
     const canvas = await canvasFromDataURL(doc.image);
