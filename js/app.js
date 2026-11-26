@@ -79,6 +79,8 @@ const fmtDate = (t) => new Date(t).toLocaleString(undefined, { dateStyle: 'mediu
 
 function showView(name) {
   for (const v of ['auth', 'home', 'crop', 'editor']) $(`#view-${v}`).hidden = v !== name;
+  // the footer (support, privacy, terms, licenses) sits at the bottom of the home and sign-in screens
+  if (name === 'home' || name === 'auth') $(`#view-${name}`).appendChild($('#siteFooter'));
   updateStatus();
 }
 

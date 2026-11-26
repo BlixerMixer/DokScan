@@ -69,6 +69,13 @@ JavaScript modules.)
 - Without accounts, saved documents live in the browser's storage on that device. Clearing site data
   deletes them, so download a project file for anything important.
 
+## Support, legal and license
+
+- Support: Blixxzt13@gmail.com · Donations: <https://github.com/sponsors/BlixerMixer>
+- [Privacy notice](privacy.html) · [Terms of service](terms.html) · [Licenses](licenses.html)
+- © 2026 BlixerMixer. All rights reserved; see [LICENSE](LICENSE). The source is public for reference
+  only and may not be copied or re-hosted without permission.
+
 ## Third-party code (in `vendor/`)
 
 - [Tesseract.js](https://github.com/naptha/tesseract.js) 5.1.1 + tesseract.js-core and English

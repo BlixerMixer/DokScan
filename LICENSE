@@ -1,0 +1,22 @@
+DokScan
+Copyright (c) 2026 BlixerMixer. All rights reserved.
+
+This software, including its source code, design, text and name, is the
+property of BlixerMixer. The source code is made publicly visible for
+reference only.
+
+No permission is granted to copy, modify, merge, publish, distribute,
+sublicense, host, sell or otherwise use this software or any part of it,
+except for using the official website as an end user, without prior written
+permission from the copyright holder. Contact: Blixxzt13@gmail.com
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY ARISING FROM, OUT
+OF OR IN CONNECTION WITH THE SOFTWARE OR ITS USE.
+
+Third-party components in the vendor/ directory are not covered by this
+notice. They are the property of their respective authors and are used under
+their own licenses (Apache License 2.0 and MIT License), included alongside
+them and listed in licenses.html.
