@@ -1,6 +1,10 @@
 import { fileToCanvas, rotateCanvas, detectPageCorners, warpPerspective, makeCanvas } from './imageproc.js';
 import { scanCanvas, newId, sortReadingOrder } from './scan.js';
-import { saveDoc, loadDoc, listDocs, deleteDoc, prefs } from './storage.js';
+import {
+  saveDoc, loadDoc, listDocs, deleteDoc, prefs, setAccount, syncAll, onSyncStatus, syncStatus,
+  flushPushes, guestDocCount, adoptGuestDocs, unsyncedCount, purgeLocal,
+} from './storage.js';
+import { cloudEnabled, sb, siteUrl, friendlyError } from './cloud.js';
 import { renderDoc, fitRatio, naturalWidth } from './render.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -74,8 +78,8 @@ const safeName = (s) => (s || 'document').replace(/[\\/:*?"<>|]+/g, '_').trim() 
 const fmtDate = (t) => new Date(t).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 
 function showView(name) {
-  for (const v of ['home', 'crop', 'editor']) $(`#view-${v}`).hidden = v !== name;
-  if (name !== 'editor') $('#saveStatus').textContent = '';
+  for (const v of ['auth', 'home', 'crop', 'editor']) $(`#view-${v}`).hidden = v !== name;
+  updateStatus();
 }
 
 function canvasFromDataURL(url) {
@@ -105,7 +109,8 @@ function initLang() {
 }
 
 // ------------------------------------------------------------------ home / library
-async function renderLibrary() {
+async function renderLibrary(sync = true) {
+  if (sync && account.user) syncAll().then((changed) => { if (changed && !$('#view-home').hidden) renderLibrary(false); });
   const list = $('#docList');
   let docs = [];
   try { docs = await listDocs(); } catch (e) { console.error(e); }
@@ -133,7 +138,7 @@ async function renderLibrary() {
       else if (a === 'copy') blankCopy(d.id);
       else if (a === 'del' && await ask(`Delete “${d.name}”? This cannot be undone.`, 'Delete', true)) {
         await deleteDoc(d.id);
-        if (prefs.get('lastDoc') === d.id) prefs.set('lastDoc', null);
+        if (prefs.get(lastDocKey()) === d.id) prefs.set(lastDocKey(), null);
         renderLibrary();
       }
     });
@@ -144,8 +149,7 @@ async function renderLibrary() {
 async function blankCopy(id) {
   const src = await loadDoc(id);
   if (!src) return;
-  const doc = structuredClone(src);
-  doc.id = newId();
+  const doc = freshCopy(src);
   doc.name = src.name + ' (blank)';
   doc.created = Date.now();
   for (const el of doc.elements) {
@@ -159,7 +163,7 @@ async function blankCopy(id) {
 function goHome() {
   flushSave();
   editor.doc = null;
-  prefs.set('lastDoc', null);
+  prefs.set(lastDocKey(), null);
   showView('home');
   renderLibrary();
   setHash('');
@@ -318,13 +322,21 @@ const editor = {
 };
 
 async function openDoc(id, mode = 'fill') {
-  const doc = await loadDoc(id);
-  if (!doc) { toast('That document could not be found.'); goHome(); return; }
+  let doc;
+  try {
+    busy.show('Opening…');
+    doc = await loadDoc(id);
+  } catch (e) {
+    toast(e.message, 6000);
+  } finally {
+    busy.hide();
+  }
+  if (!doc) { if (doc === null) toast('That document could not be found.'); goHome(); return; }
   editor.doc = doc;
   editor.sel = null;
   editor.undo = []; editor.redo = [];
   editor.zoom = 1;
-  prefs.set('lastDoc', id);
+  prefs.set(lastDocKey(), id);
   $('#docName').value = doc.name;
   $('#origToggle').checked = false;
   $('#origOpacity').hidden = true;
@@ -434,7 +446,20 @@ const elById = (id) => editor.doc.elements.find((e) => e.id === id);
 
 // ---------- saving
 let saveTimer = null, dirty = false;
-function setSaved(ok) { $('#saveStatus').textContent = ok ? 'All changes saved' : 'Saving…'; }
+let localSaving = false;
+function setSaved(ok) { localSaving = !ok; updateStatus(); }
+function updateStatus() {
+  const el = $('#saveStatus');
+  el.classList.remove('warn');
+  if (!$('#view-auth').hidden) { el.textContent = ''; return; }
+  const inEditor = !$('#view-editor').hidden;
+  const st = syncStatus();
+  if (inEditor && localSaving) { el.textContent = 'Saving…'; return; }
+  if (st === 'local') { el.textContent = inEditor ? 'All changes saved' : ''; return; }
+  if (st === 'syncing') el.textContent = 'Syncing…';
+  else if (st === 'synced') el.textContent = inEditor ? 'Saved to your account' : 'Up to date';
+  else { el.textContent = st === 'offline' ? 'Offline – saved on this device' : 'Sync problem – saved on this device'; el.classList.add('warn'); }
+}
 function scheduleSave() {
   dirty = true;
   setSaved(false);
@@ -792,7 +817,9 @@ async function exportAs(kind) {
   await flushSave();
   const name = safeName(doc.name);
   if (kind === 'json') {
-    const blob = new Blob([JSON.stringify({ app: 'dokscan', version: 1, doc }, null, 0)], { type: 'application/json' });
+    const { id, name: n, created, updated, width, height, lang, image, elements } = doc;
+    const plain = { id, name: n, created, updated, width, height, lang, image, elements };
+    const blob = new Blob([JSON.stringify({ app: 'dokscan', version: 1, doc: plain }, null, 0)], { type: 'application/json' });
     download(blob, `${name}.dokscan.json`);
     return;
   }
@@ -956,9 +983,9 @@ function initEditor() {
 async function importProject(file) {
   try {
     const data = JSON.parse(await file.text());
-    const doc = data.doc || data;
-    if (!doc || !Array.isArray(doc.elements) || !doc.width || !doc.height) throw new Error('Not a DokScan project file');
-    doc.id = newId();
+    const src = data.doc || data;
+    if (!src || !Array.isArray(src.elements) || !src.width || !src.height) throw new Error('Not a DokScan project file');
+    const doc = freshCopy(src);
     doc.created = doc.created || Date.now();
     doc.elements = sortReadingOrder(doc.elements.filter((e) => e && e.type && isFinite(e.x) && isFinite(e.y)));
     for (const e of doc.elements) if (!e.id) e.id = newId();
@@ -999,6 +1026,146 @@ function initHome() {
   });
 }
 
+// ------------------------------------------------------------------ accounts
+const lastDocKey = () => 'lastDoc:' + (account.user?.id || 'local');
+const account = { user: null, authMode: 'signin' };
+
+// A copy of a document that is new to storage (new id, nothing synced yet).
+function freshCopy(src) {
+  const doc = structuredClone(src);
+  for (const k of ['owner', 'dirty', 'imageSynced', 'remoteUpdated', 'thumb']) delete doc[k];
+  doc.id = newId();
+  doc.created = Date.now();
+  return doc;
+}
+
+function setAuthMode(mode) {
+  account.authMode = mode;
+  const msg = $('#authMsg');
+  msg.textContent = ''; msg.className = 'auth-msg';
+  $$('#authTabs button').forEach((b) => b.classList.toggle('on', b.dataset.auth === mode));
+  $('#authTabs').hidden = mode === 'reset' || mode === 'newpw';
+  $('#emailRow').hidden = mode === 'newpw';
+  $('#pwRow').hidden = mode === 'reset';
+  $('#forgotBtn').hidden = mode !== 'signin';
+  const pw = $('#authPassword');
+  pw.autocomplete = mode === 'signin' ? 'current-password' : 'new-password';
+  const text = {
+    signin: ['Sign in to DokScan', 'Your documents are saved to your account, so you can open them on any device where you sign in.', 'Password', 'Sign in'],
+    signup: ['Create your account', 'Use your email and choose a password. Only you can see the documents in your account.', 'Choose a password (at least 6 characters)', 'Create account'],
+    reset: ['Reset your password', 'Enter your email and we’ll send you a link to choose a new password.', 'Password', 'Send reset link'],
+    newpw: ['Choose a new password', 'Type the new password for your account.', 'New password (at least 6 characters)', 'Save new password'],
+  }[mode];
+  [$('#authTitle').textContent, $('#authLead').textContent, $('#pwLabel').textContent, $('#authSubmit').textContent] = text;
+  if (mode === 'reset') $('#forgotBtn').hidden = true;
+}
+
+function authMessage(text, ok = false) {
+  const msg = $('#authMsg');
+  msg.textContent = text;
+  msg.className = 'auth-msg ' + (ok ? 'ok' : 'err');
+}
+
+function showSignIn(mode = 'signin') {
+  editor.doc = null;
+  $('#account').hidden = true;
+  setAuthMode(mode);
+  showView('auth');
+}
+
+function initAuth() {
+  $$('#authTabs button').forEach((b) => (b.onclick = () => setAuthMode(b.dataset.auth)));
+  $('#forgotBtn').onclick = () => setAuthMode('reset');
+  $('#authForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = $('#authEmail').value.trim();
+    const password = $('#authPassword').value;
+    const mode = account.authMode;
+    if (mode !== 'newpw' && !/^\S+@\S+\.\S+$/.test(email)) { authMessage('Enter your email address.'); return; }
+    if (mode !== 'reset' && password.length < 6) { authMessage('The password must be at least 6 characters.'); return; }
+    const btn = $('#authSubmit');
+    btn.disabled = true;
+    authMessage('Please wait…', true);
+    try {
+      if (mode === 'signin') {
+        const { error } = await sb.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+        // onAuthStateChange takes it from here
+      } else if (mode === 'signup') {
+        const { data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: siteUrl() } });
+        if (error) throw error;
+        if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+          throw new Error('already registered');
+        }
+        if (!data.session) {
+          setAuthMode('signin');
+          authMessage(`Almost done: we sent a confirmation link to ${email}. Open it, then sign in here.`, true);
+        }
+      } else if (mode === 'reset') {
+        const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: siteUrl() });
+        if (error) throw error;
+        authMessage(`If ${email} has an account, a reset link is on its way. Open it on this device.`, true);
+      } else if (mode === 'newpw') {
+        const { error } = await sb.auth.updateUser({ password });
+        if (error) throw error;
+        $('#authPassword').value = '';
+        toast('Password changed');
+        const { data } = await sb.auth.getSession();
+        await signedIn(data.session?.user);
+      }
+    } catch (err) {
+      authMessage(friendlyError(err));
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  $('#logoutBtn').onclick = async () => {
+    await flushSave();
+    await flushPushes();
+    const left = await unsyncedCount();
+    if (left && !await ask(`${left} document${left > 1 ? 's have' : ' has'} changes that haven’t reached your account yet (you seem to be offline). Log out anyway and lose those changes?`, 'Log out', true)) return;
+    const uid = account.user?.id;
+    account.user = null;
+    setAccount(null, null);
+    if (uid) await purgeLocal(uid);   // don't leave a person's documents on a shared computer
+    await sb.auth.signOut().catch(() => {});
+    $('#authPassword').value = '';
+    showSignIn();
+  };
+}
+
+let signingIn = null;
+async function signedIn(user) {
+  if (!user) return;
+  if (account.user?.id === user.id && $('#view-auth').hidden) return;
+  if (signingIn) return signingIn;
+  signingIn = (async () => {
+    account.user = user;
+    account.authMode = 'signin';
+    setAccount(sb, user.id);
+    $('#acctEmail').textContent = user.email || '';
+    $('#acctEmail').title = user.email || '';
+    $('#account').hidden = false;
+    $('#authPassword').value = '';
+
+    const guests = await guestDocCount();
+    if (guests && await ask(`This device has ${guests} document${guests > 1 ? 's' : ''} saved without an account. Move ${guests > 1 ? 'them' : 'it'} into your account (${user.email})?`, 'Move to my account')) {
+      await adoptGuestDocs();
+    }
+
+    showView('home');
+    await renderLibrary(false);
+    const changed = await Promise.race([syncAll(), new Promise((r) => setTimeout(() => r(false), 5000))]);
+    if (changed) renderLibrary(false);
+
+    const m = location.hash.match(/doc=([\w-]+)/);
+    const last = m?.[1] || prefs.get(lastDocKey());
+    if (last && (await listDocs()).some((d) => d.id === last)) openDoc(last);
+  })().finally(() => { signingIn = null; });
+  return signingIn;
+}
+
 async function boot() {
   initLang();
   initHome();
@@ -1006,14 +1173,29 @@ async function boot() {
   initEditor();
   initLayoutEditing();
   initFill();
-  const m = location.hash.match(/doc=([\w-]+)/);
-  const last = m?.[1] || prefs.get('lastDoc');
-  if (last && await loadDoc(last).catch(() => null)) {
-    openDoc(last);
-  } else {
-    showView('home');
-    renderLibrary();
+  onSyncStatus(updateStatus);
+
+  if (!cloudEnabled) {
+    const m = location.hash.match(/doc=([\w-]+)/);
+    const last = m?.[1] || prefs.get(lastDocKey());
+    if (last && await loadDoc(last).catch(() => null)) openDoc(last);
+    else { showView('home'); renderLibrary(); }
+    return;
   }
+
+  initAuth();
+  $('.library .muted.small').innerHTML = 'Documents are saved to your account. Sign in on any phone or computer to see them there too. A copy is kept on this device so you can keep working offline.';
+  sb.auth.onAuthStateChange((event, session) => {
+    // run outside the auth callback (Supabase advises against awaiting in it)
+    setTimeout(() => {
+      if (event === 'PASSWORD_RECOVERY') { account.user = session?.user || null; showSignIn('newpw'); return; }
+      if (event === 'SIGNED_OUT') { if (account.user) { setAccount(null, null); account.user = null; showSignIn(); } return; }
+      if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session?.user && account.authMode !== 'newpw') {
+        if (account.user?.id !== session.user.id) signedIn(session.user);
+      }
+      if (event === 'INITIAL_SESSION' && !session) showSignIn();
+    }, 0);
+  });
 }
 
 boot();

@@ -8,6 +8,7 @@
   --accent-ink: #ffffff;
   --accent-soft: rgba(47, 91, 211, 0.09);
   --danger: #c23b3b;
+  --ok: #1f7a4a;
   --field: rgba(47, 91, 211, 0.08);
   --field-focus: rgba(47, 91, 211, 0.16);
   --shadow: 0 1px 2px rgba(20, 30, 50, .08), 0 8px 24px rgba(20, 30, 50, .08);
@@ -24,6 +25,8 @@
     --accent: #6d8ff0;
     --accent-ink: #0e1420;
     --accent-soft: rgba(109, 143, 240, 0.14);
+    --ok: #5cc28c;
+    --danger: #ef7b7b;
     --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .3);
     color-scheme: dark;
   }
@@ -37,6 +40,8 @@
     --accent: #6d8ff0;
     --accent-ink: #0e1420;
     --accent-soft: rgba(109, 143, 240, 0.14);
+    --ok: #5cc28c;
+    --danger: #ef7b7b;
     --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .3);
     color-scheme: dark;
 }
@@ -229,3 +234,32 @@ body.dragging .drop-hint { border-color: var(--accent); background: var(--accent
 .ask-msg { margin: 0 0 18px; text-align: left; }
 .ask-row { display: flex; gap: 8px; justify-content: flex-end; }
 .btn.danger-solid { background: var(--danger); border-color: var(--danger); color: #fff; font-weight: 600; }
+
+/* ---------- accounts ---------- */
+.account { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.acct-email { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 34vw; }
+#view-auth { overflow: auto; padding: 32px 16px; }
+.auth-card {
+  max-width: 420px; margin: 0 auto; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 14px; padding: 28px 24px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 14px;
+}
+.auth-card h1 { margin: 0; font-size: 24px; }
+.auth-card p { margin: 0; }
+.auth-tabs { align-self: stretch; }
+.auth-tabs button { flex: 1; }
+#authForm { display: flex; flex-direction: column; gap: 12px; }
+.field { display: flex; flex-direction: column; gap: 4px; font-size: 14px; font-weight: 600; }
+.field input {
+  font: inherit; font-weight: 400; font-size: 16px; color: var(--text); background: var(--bg);
+  border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; min-height: 44px;
+}
+.field input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.auth-msg { min-height: 1.2em; font-size: 14px; }
+.auth-msg.err { color: var(--danger); }
+.auth-msg.ok { color: var(--ok); }
+.linkish { background: none; border: 0; color: var(--accent); font: inherit; font-size: 14px; cursor: pointer; padding: 4px 0; align-self: center; }
+.linkish:hover { text-decoration: underline; }
+.save-status.warn { color: var(--danger); }
+@media (max-width: 640px) {
+  .acct-email { display: none; }
+}
