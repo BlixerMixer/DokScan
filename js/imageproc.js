@@ -1,7 +1,7 @@
 // Image processing: loading, rotation, page detection, perspective warp,
 // binarisation and detection of ruled lines, tables and checkboxes.
 
-export async function fileToCanvas(file, maxSide = 2600) {
+export async function fileToCanvas(file, maxSide = 4200) {
   let src;
   try {
     src = await createImageBitmap(file, { imageOrientation: 'from-image' });
@@ -19,6 +19,8 @@ export async function fileToCanvas(file, maxSide = 2600) {
   const ctx = c.getContext('2d');
   ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, c.width, c.height);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(src, 0, 0, c.width, c.height);
   return c;
 }
@@ -159,7 +161,7 @@ function homography(dst, src) {
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
 // Crop + straighten the quadrilateral `corners` (tl,tr,br,bl) into a flat page.
-export function warpPerspective(src, corners, minW = 1400, maxW = 2000) {
+export function warpPerspective(src, corners, minW = 2000, maxW = 2480) {
   const [tl, tr, br, bl] = corners;
   let outW = Math.max(dist(tl, tr), dist(bl, br));
   let outH = Math.max(dist(tl, bl), dist(tr, br));
@@ -176,20 +178,31 @@ export function warpPerspective(src, corners, minW = 1400, maxW = 2000) {
   const od = octx.createImageData(outW, outH);
   const o = od.data;
   const [a, b, c, d, e, f, g, h] = Hm;
+  // When shrinking, average several samples per output pixel so thin pen
+  // strokes don't break up; when enlarging, one bilinear sample is enough.
+  const ss = k < 0.9 ? 3 : 1;
+  const offs = [];
+  for (let i = 0; i < ss; i++) for (let j = 0; j < ss; j++) offs.push([(i + 0.5) / ss - 0.5, (j + 0.5) / ss - 0.5]);
+  const acc = [0, 0, 0];
   for (let v = 0; v < outH; v++) {
     for (let u = 0; u < outW; u++) {
-      const den = g * u + h * v + 1;
-      let x = (a * u + b * v + c) / den, y = (d * u + e * v + f) / den;
-      x = Math.min(sw - 1.001, Math.max(0, x));
-      y = Math.min(sh - 1.001, Math.max(0, y));
-      const x0 = x | 0, y0 = y | 0, fx = x - x0, fy = y - y0;
-      const i00 = (y0 * sw + x0) * 4, i10 = i00 + 4, i01 = i00 + sw * 4, i11 = i01 + 4;
-      const oi = (v * outW + u) * 4;
-      for (let ch = 0; ch < 3; ch++) {
-        const top = sd[i00 + ch] + (sd[i10 + ch] - sd[i00 + ch]) * fx;
-        const bot = sd[i01 + ch] + (sd[i11 + ch] - sd[i01 + ch]) * fx;
-        o[oi + ch] = top + (bot - top) * fy;
+      acc[0] = acc[1] = acc[2] = 0;
+      for (const [du, dv] of offs) {
+        const uu = u + 0.5 + du, vv = v + 0.5 + dv;
+        const den = g * uu + h * vv + 1;
+        let x = (a * uu + b * vv + c) / den - 0.5, y = (d * uu + e * vv + f) / den - 0.5;
+        x = Math.min(sw - 1.001, Math.max(0, x));
+        y = Math.min(sh - 1.001, Math.max(0, y));
+        const x0 = x | 0, y0 = y | 0, fx = x - x0, fy = y - y0;
+        const i00 = (y0 * sw + x0) * 4, i10 = i00 + 4, i01 = i00 + sw * 4, i11 = i01 + 4;
+        for (let ch = 0; ch < 3; ch++) {
+          const top = sd[i00 + ch] + (sd[i10 + ch] - sd[i00 + ch]) * fx;
+          const bot = sd[i01 + ch] + (sd[i11 + ch] - sd[i01 + ch]) * fx;
+          acc[ch] += top + (bot - top) * fy;
+        }
       }
+      const oi = (v * outW + u) * 4, n = offs.length;
+      o[oi] = acc[0] / n; o[oi + 1] = acc[1] / n; o[oi + 2] = acc[2] / n;
       o[oi + 3] = 255;
     }
   }
@@ -379,7 +392,8 @@ function findCheckboxes(bin, w, h) {
 // Detect ruled lines, table cells and checkboxes in a binarised page.
 export function analyzeStructure(bin, w, h) {
   const at = (x, y) => bin[y * w + x];
-  const maxT = Math.max(6, w * 0.012);
+  // ruled lines are thin; thicker "lines" are usually blurred words
+  const maxT = Math.max(6, w * 0.0055);
   const marginX = w * 0.006, marginY = h * 0.006;
   const minH = Math.max(40, w * 0.03);
   const minV = Math.max(24, w * 0.015);
@@ -444,8 +458,10 @@ export function analyzeStructure(bin, w, h) {
     cells.push(...found);
     for (const l of [...cl.H, ...cl.V]) { used.add(l); lines.push(l); }
   }
+  // a line to write on is at least ~1.3 cm long; shorter dark marks are noise
+  const minFill = w * 0.06;
   for (const l of H) {
-    if (used.has(l)) continue;
+    if (used.has(l) || l.len < minFill) continue;
     lines.push(l);
     fillLines.push(l);
   }
@@ -465,15 +481,37 @@ export function analyzeStructure(bin, w, h) {
   return { lines, cells, checks, fillLines, tol };
 }
 
-// Copy of the binarised page with ruled lines removed, for cleaner OCR.
-export function ocrCanvasFrom(bin, w, h, lines) {
+// Page prepared for text recognition: shadows and uneven light are evened out
+// (each pixel divided by its local background brightness) but the greyscale
+// edges of letters are kept, which reads far better than pure black/white.
+// Ruled lines are painted out so they aren't mistaken for characters.
+export function ocrCanvasFrom(gray, w, h, lines) {
+  const r = Math.max(10, Math.round(Math.max(w, h) / 45));
+  const W1 = w + 1;
+  const integ = new Uint32Array(W1 * (h + 1));
+  for (let y = 0; y < h; y++) {
+    let row = 0;
+    for (let x = 0; x < w; x++) {
+      row += gray[y * w + x];
+      integ[(y + 1) * W1 + x + 1] = integ[y * W1 + x + 1] + row;
+    }
+  }
   const c = makeCanvas(w, h);
   const ctx = c.getContext('2d');
   const img = ctx.createImageData(w, h);
   const d = img.data;
-  for (let i = 0, j = 0; i < bin.length; i++, j += 4) {
-    const v = bin[i] ? 0 : 255;
-    d[j] = d[j + 1] = d[j + 2] = v; d[j + 3] = 255;
+  for (let y = 0; y < h; y++) {
+    const y0 = Math.max(0, y - r), y1 = Math.min(h, y + r + 1);
+    for (let x = 0; x < w; x++) {
+      const x0 = Math.max(0, x - r), x1 = Math.min(w, x + r + 1);
+      const mean = (integ[y1 * W1 + x1] - integ[y0 * W1 + x1] - integ[y1 * W1 + x0] + integ[y0 * W1 + x0]) / ((x1 - x0) * (y1 - y0));
+      // paper is a little brighter than the local mean (which includes ink)
+      const bg = Math.max(24, mean * 1.08);
+      let t = gray[y * w + x] / bg;
+      t = t >= 0.92 ? 1 : Math.pow(Math.max(0, t / 0.92), 1.6);
+      const v = Math.round(t * 255), j = (y * w + x) * 4;
+      d[j] = d[j + 1] = d[j + 2] = v; d[j + 3] = 255;
+    }
   }
   ctx.putImageData(img, 0, 0);
   ctx.fillStyle = '#fff';

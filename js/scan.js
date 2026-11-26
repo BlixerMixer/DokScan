@@ -76,7 +76,7 @@ export async function scanCanvas(canvas, lang, onStep) {
   const bin = binarize(gray, W, H);
   await tick();
   const st = analyzeStructure(bin, W, H);
-  const ocrCanvas = ocrCanvasFrom(bin, W, H, st.lines);
+  const ocrCanvas = ocrCanvasFrom(gray, W, H, st.lines);
 
   onStep?.('ocr', 0);
   progressCb = (m) => {
@@ -186,11 +186,16 @@ function buildElements(W, H, st, data, bin) {
     if (wd.used) continue;
     let fx0;
     const fx1 = wd.x1;
-    if (DOTS.test(wd.text)) { fx0 = wd.x0; wd.used = true; }
+    if (DOTS.test(wd.text)) {
+      // short runs of dots/dashes are usually noise, not a line to write on
+      if (wd.x1 - wd.x0 < baseFont * 3) { wd.used = true; continue; }
+      fx0 = wd.x0; wd.used = true;
+    }
     else {
       const m = wd.text.match(DOTS_TAIL);
       if (!m) continue;
       fx0 = wd.x0 + (wd.x1 - wd.x0) * (m[1].length / wd.text.length);
+      if (wd.x1 - fx0 < baseFont * 3) continue;
       wd.text = m[1];
       wd.x1 = fx0 - 2;
     }
